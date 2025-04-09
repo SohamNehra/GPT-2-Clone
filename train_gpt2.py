@@ -157,15 +157,20 @@ class GPT(nn.Module):
 # model=GPT.from_pretrained('gpt2')
 # model.eval()
 # model.to('cuda')
+# Automatically use MPS if available
+device="cpu"
+if torch.cuda.is_available():
+    device = "cuda"
+elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+    device = "mps"
+print(f"Using device: {device}")
+
 
 num_return_sequences = 5
 max_length = 30
 
 model = GPT.from_pretrained('gpt2')
 model.eval()
-
-# Automatically use MPS if available
-device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
 model.to(device)
 
 #prefix tokens
