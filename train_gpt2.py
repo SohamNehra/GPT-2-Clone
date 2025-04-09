@@ -85,7 +85,7 @@ class GPT(nn.Module):
         ))
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
 
-    def forward(self, idx):
+    def forward(self, idx,targets=None):
         #idx is of shape (B,T)
         B,T=idx.size()
         assert T<=self.config.block_size, f"Cannot forward sequence of length {T}, block size is only {self.config.block_size}"
@@ -100,7 +100,10 @@ class GPT(nn.Module):
         #forward the final layer norm and lm head
         x=self.transformer.ln_f(x)
         logits=self.lm_head(x) #(B,T,vocab_size)
-        return logits
+        loss=None
+        if targets is not None:
+            loss=F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=-1)
+        return logits,loss
 
 
     @classmethod
@@ -165,47 +168,78 @@ elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
     device = "mps"
 print(f"Using device: {device}")
 
-
-num_return_sequences = 5
-max_length = 30
-
-model = GPT.from_pretrained('gpt2')
-model.eval()
-model.to(device)
-
-#prefix tokens
+#get a data batch
 import tiktoken
 enc=tiktoken.get_encoding("gpt2")
-tokens=enc.encode("Hello, I'm a language model,")
-tokens = torch.tensor(tokens, dtype=torch.long)  # shape: (8,)
-tokens = tokens.unsqueeze(0).repeat(num_return_sequences, 1)  # shape: (5, 8)
+with open('input.txt', 'r', encoding='utf-8') as f:
+    text = f.read()
+text=text[:1000]
+tokens=enc.encode(text)
+B, T=4, 32
+buf=torch.tensor(tokens[:B*T+1])
+x=buf[:-1].view(B,T)
+y=buf[1:].view(B,T)
 
-x=tokens.to(device) # (1,8)
 
-# generate! right now x is (B, T) where B = 5, T = 8
-# set the seed to 42
-torch.manual_seed (42)
-while x.size(1) < max_length:
-    # forward the model to get the logits
-    with torch.no_grad():
-        logits = model(x) # (B, T, vocab_size)
-        # take the logits at the last position
-        logits = logits[:, -1, :] # (B, vocab_size)
-        # get the probabilities
-        probs = F.softmax(logits, dim=-1)
-        # do top-k sampling of 50 (huggingface pipeline default)
-        # topk_probs here becomes (5, 50), topk_indices is (5, 50)
-        topk_probs, topk_indices = torch.topk(probs, 50, dim=-1)
-        # select a token from the top-k probabilities
-        ix = torch.multinomial(topk_probs, 1) # (B, 1)
-        # gather the corresponding indices
-        xcol = torch.gather(topk_indices, -1, ix) # (B, 1)
-        # append to the sequence
-        x = torch.cat((x, xcol), dim=1)
+model = GPT(GPTConfig())
+model.to(device)
+x = x.to(device)
+y = y.to(device)
+# logits, loss=model(x, y)
+optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
 
-#print the generated text
-for i in range(num_return_sequences):
-    tokens=x[i,: max_length].tolist()
-    decoded=enc.decode(tokens)
-    print(">",decoded)
+for i in range(50):
+    optimizer.zero_grad()
+    logits, loss = model(x, y)
+    loss.backward()
+    optimizer.step()
+    print(f"Step {i}: Loss = {loss.item()}")
+
+
+
+import sys; sys.exit(0)
+
+
+
+
+
+
+
+
+# #prefix tokens
+# import tiktoken
+# enc=tiktoken.get_encoding("gpt2")
+
+# tokens=enc.encode("Hello, I'm a language model,")
+# tokens = torch.tensor(tokens, dtype=torch.long)  # shape: (8,)
+# tokens = tokens.unsqueeze(0).repeat(num_return_sequences, 1)  # shape: (5, 8)
+
+# x=tokens.to(device) # (1,8)
+
+# # generate! right now x is (B, T) where B = 5, T = 8
+# # set the seed to 42
+# torch.manual_seed (42)
+# while x.size(1) < max_length:
+#     # forward the model to get the logits
+#     with torch.no_grad():
+#         logits = model(x) # (B, T, vocab_size)
+#         # take the logits at the last position
+#         logits = logits[:, -1, :] # (B, vocab_size)
+#         # get the probabilities
+#         probs = F.softmax(logits, dim=-1)
+#         # do top-k sampling of 50 (huggingface pipeline default)
+#         # topk_probs here becomes (5, 50), topk_indices is (5, 50)
+#         topk_probs, topk_indices = torch.topk(probs, 50, dim=-1)
+#         # select a token from the top-k probabilities
+#         ix = torch.multinomial(topk_probs, 1) # (B, 1)
+#         # gather the corresponding indices
+#         xcol = torch.gather(topk_indices, -1, ix) # (B, 1)
+#         # append to the sequence
+#         x = torch.cat((x, xcol), dim=1)
+
+# #print the generated text
+# for i in range(num_return_sequences):
+#     tokens=x[i,: max_length].tolist()
+#     decoded=enc.decode(tokens)
+#     print(">",decoded)
 
