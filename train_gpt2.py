@@ -216,6 +216,7 @@ class DataLoaderLite:
             self.current_position=0
         return x, y
 
+import time
 
 device="cpu"
 if torch.cuda.is_available():
@@ -228,25 +229,31 @@ torch.manual_seed(1337)
 if torch.cuda.is_available():
     torch.cuda.manual_seed(1337)
 
-train_loader=DataLoaderLite(B=4, T=32)
-
+train_loader=DataLoaderLite(B=4, T=1024)
+torch.set_float32_matmul_precision('high')
 
 
 model = GPT(GPTConfig())
 model.to(device)
-# logits, loss=model(x, y)
+# model=torch.compile(model) cant use this because it needsms value 80 but i have 20 in my gpu
+
 optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
 
 for i in range(50):
+    t0=time.time()
     x, y = train_loader.next_batch()
     x = x.to(device)
     y = y.to(device)
     optimizer.zero_grad()
-    logits, loss = model(x, y)
-    import code; code.interact(local=locals())
+    with torch.autocast(device_type=device, dtype=torch.bfloat16):
+        logits, loss = model(x, y)
     loss.backward()
     optimizer.step()
-    print(f"Step {i}: Loss = {loss.item()}")
+    torch.cuda.synchronize()
+    t1=time.time()  
+    dt=(t1-t0)*1000
+    tokens_per_sec = (train_loader.B * train_loader.T) / (t1 - t0)
+    print(f"Step {i}: Loss = {loss.item()}, dt: {dt:.2f}ms", f"tokens/sec: {tokens_per_sec:.2f}")
 
 
 
